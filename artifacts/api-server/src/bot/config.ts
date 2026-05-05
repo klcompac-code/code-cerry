@@ -6,7 +6,6 @@ export interface BotConfig {
   freeMaxTokens: number;
   premiumMaxTokens: number;
   allowDmCommands: boolean;
-  blockOsLibrary: boolean;
 }
 
 export const config: BotConfig = {
@@ -17,7 +16,6 @@ export const config: BotConfig = {
   freeMaxTokens: 100,
   premiumMaxTokens: 1000,
   allowDmCommands: false,
-  blockOsLibrary: true,
 };
 
 export function getOwnerIds(): string[] {

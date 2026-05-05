@@ -1,5 +1,5 @@
 import { Message, AttachmentBuilder } from "discord.js";
-import { config } from "../config";
+import { checkAntiVuln, formatBlockedMessage } from "../anti-vuln";
 
 function extractCode(msg: Message, prefix: string): string {
   const content = msg.content.slice(prefix.length).trim();
@@ -8,32 +8,19 @@ function extractCode(msg: Message, prefix: string): string {
   return content;
 }
 
-const BLOCKED_OS_PATTERNS = [
-  /\bos\s*\.\s*exit\b/,
-  /\bos\s*\.\s*execute\b/,
-  /\bos\s*\.\s*remove\b/,
-  /\bos\s*\.\s*rename\b/,
-  /\bos\s*\.\s*tmpname\b/,
-];
-
-function checkBlockedLibraries(code: string): string | null {
-  if (!config.blockOsLibrary) return null;
-  for (const pat of BLOCKED_OS_PATTERNS) {
-    if (pat.test(code)) {
-      const match = code.match(pat);
-      return `\`${match?.[0]}\``;
-    }
-  }
-  return null;
-}
-
 function luauToLua53(code: string): string {
   let out = code;
+  // continue → goto
   out = out.replace(/\bcontinue\b/g, "goto __continue__");
+  // task.wait → coroutine.yield
   out = out.replace(/\btask\.wait\b/g, "coroutine.yield");
+  // task.spawn → coroutine.wrap
   out = out.replace(/\btask\.spawn\b/g, "coroutine.wrap");
-  out = out.replace(/\bstring\.split\s*\(([^,]+),\s*([^)]+)\)/g, (_m, s, sep) =>
-    `(function(str,d) local t={} for p in str:gmatch("[^"..d.."]+") do t[#t+1]=p end return t end)(${s},${sep})`
+  // string.split polyfill
+  out = out.replace(
+    /\bstring\.split\s*\(([^,]+),\s*([^)]+)\)/g,
+    (_m, s, sep) =>
+      `(function(str,d) local t={} for p in str:gmatch("[^"..d.."]+") do t[#t+1]=p end return t end)(${s},${sep})`
   );
   return out;
 }
@@ -61,9 +48,10 @@ export async function luaCommand(msg: Message) {
     return;
   }
 
-  const blocked = checkBlockedLibraries(rawCode);
-  if (blocked) {
-    await msg.reply(`🚫 Kode mengandung fungsi yang diblokir: ${blocked}\nLibrary \`os\` (exit, execute, remove, rename) tidak diizinkan.`);
+  // Anti-vuln: blokir os.* dan io.*
+  const vulv = checkAntiVuln(rawCode);
+  if (vulv.blocked) {
+    await msg.reply(formatBlockedMessage(vulv));
     return;
   }
 

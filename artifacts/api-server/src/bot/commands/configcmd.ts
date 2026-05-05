@@ -11,21 +11,21 @@ export async function configCommand(msg: Message) {
     color: 0xe67e22,
     title: "⚙️ Bot Configuration",
     fields: [
-      { name: "Free Default Tokens", value: String(config.freeDefaultTokens), inline: true },
+      { name: "Free Default Tokens",    value: String(config.freeDefaultTokens),    inline: true },
       { name: "Premium Default Tokens", value: String(config.premiumDefaultTokens), inline: true },
-      { name: "\u200b", value: "\u200b", inline: true },
-      { name: "Free Max Tokens", value: String(config.freeMaxTokens), inline: true },
-      { name: "Premium Max Tokens", value: String(config.premiumMaxTokens), inline: true },
-      { name: "\u200b", value: "\u200b", inline: true },
-      { name: "Token Restore Amount", value: `+${config.tokenRestoreAmount} / hour`, inline: true },
-      { name: "Allow DM Commands", value: config.allowDmCommands ? "✅ Yes" : "❌ No", inline: true },
-      { name: "Block os Library", value: config.blockOsLibrary ? "✅ Yes" : "❌ No", inline: true },
+      { name: "\u200b",                 value: "\u200b",                            inline: true },
+      { name: "Free Max Tokens",        value: String(config.freeMaxTokens),        inline: true },
+      { name: "Premium Max Tokens",     value: String(config.premiumMaxTokens),     inline: true },
+      { name: "\u200b",                 value: "\u200b",                            inline: true },
+      { name: "Token Restore Amount",   value: `+${config.tokenRestoreAmount} / hour`, inline: true },
+      { name: "Allow DM Commands",      value: config.allowDmCommands ? "✅ Yes" : "❌ No", inline: true },
+      { name: "Anti-Vuln (os/io)",      value: "✅ Always Active", inline: true },
     ],
     description:
       "Use `.settoken config <key> <value>` to update numbers.\n" +
       "Use `.setconfig <key> <true|false>` to toggle boolean settings.\n\n" +
       "Number keys: `free_default` · `premium_default` · `free_max` · `premium_max` · `restore_amount`\n" +
-      "Toggle keys: `allow_dm` · `block_os`",
+      "Toggle keys: `allow_dm`",
     footer: { text: "Lua Dumper Bot • Owner Panel" },
   };
 

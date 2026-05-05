@@ -1,24 +1,5 @@
 import { Message, AttachmentBuilder } from "discord.js";
-import { config } from "../config";
-
-const BLOCKED_OS_PATTERNS = [
-  /\bos\s*\.\s*exit\b/,
-  /\bos\s*\.\s*execute\b/,
-  /\bos\s*\.\s*remove\b/,
-  /\bos\s*\.\s*rename\b/,
-  /\bos\s*\.\s*tmpname\b/,
-];
-
-function checkBlockedLibraries(code: string): string | null {
-  if (!config.blockOsLibrary) return null;
-  for (const pat of BLOCKED_OS_PATTERNS) {
-    if (pat.test(code)) {
-      const match = code.match(pat);
-      return `\`${match?.[0]}\``;
-    }
-  }
-  return null;
-}
+import { checkAntiVuln, formatBlockedMessage } from "../anti-vuln";
 
 function extractCode(msg: Message, prefix: string): string {
   const content = msg.content.slice(prefix.length).trim();
@@ -79,9 +60,10 @@ export async function obfCommand(msg: Message) {
     return;
   }
 
-  const blocked = checkBlockedLibraries(rawCode);
-  if (blocked) {
-    await msg.reply(`🚫 Kode mengandung fungsi yang diblokir: ${blocked}\nLibrary \`os\` (exit, execute, remove, rename) tidak diizinkan.`);
+  // Anti-vuln: blokir os.* dan io.*
+  const vulv = checkAntiVuln(rawCode);
+  if (vulv.blocked) {
+    await msg.reply(formatBlockedMessage(vulv));
     return;
   }
 
