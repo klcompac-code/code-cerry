@@ -725,24 +725,23 @@ async function getContent(msg: Message, argLink?: string | null): Promise<Conten
 let _luaInterp: string | null = null;
 let _luaHasE = false;
 
-async function findLua(): Promise<string> {
+async function findLua(): Promise<string | null> {
   if (_luaInterp) return _luaInterp;
   for (const interp of LUA_INTERPRETERS) {
     try {
       const ok = await runProcess(interp, ["-v"], "", 3000);
-      if (ok.code === 0) {
+      if (ok.code === 0 && ok.stderr !== "spawn error") {
         _luaInterp = interp;
         // Check -E flag support
         const eCheck = await runProcess(interp, ["-E", "-v"], "", 3000);
-        _luaHasE = eCheck.code === 0;
+        _luaHasE = eCheck.code === 0 && eCheck.stderr !== "spawn error";
         logger.info({ interp, hasE: _luaHasE, source: FILE_NAME }, "Lua interpreter detected");
         return interp;
       }
     } catch {}
   }
-  _luaInterp = LUA_INTERPRETERS[0];
-  logger.warn({ interp: _luaInterp, source: FILE_NAME }, "No Lua interpreter found, using fallback");
-  return _luaInterp;
+  logger.warn({ source: FILE_NAME }, "No Lua interpreter found — install lua5.3, lua5.1, lua5.4, luajit, or lua");
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -757,7 +756,12 @@ interface ProcessResult {
 
 function runProcess(cmd: string, args: string[], stdin: string, timeoutMs: number): Promise<ProcessResult> {
   return new Promise((resolve) => {
-    const proc = spawn(cmd, args);
+    let proc: ReturnType<typeof spawn>;
+    try {
+      proc = spawn(cmd, args);
+    } catch {
+      return resolve({ code: -1, stdout: "", stderr: "spawn error" });
+    }
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
 
@@ -822,6 +826,9 @@ async function runDumper(luaContent: Buffer): Promise<DumperResult> {
   const release = await dumpSemaphore.acquire();
   try {
   const interp = await findLua();
+  if (!interp) {
+    return { dumped: null, execMs: 0, loops: 0, lines: 0, error: "No Lua interpreter found. Install lua5.3, lua5.1, lua5.4, luajit, or lua on the server." };
+  }
   // FIX #1: Gunakan crypto-safe random (bukan Math.random yang lemah)
   const uid = randomBytes(16).toString("hex");
   const inputFile  = path.join(os.tmpdir(), `senv_in_${uid}.lua`);

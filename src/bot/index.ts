@@ -1,3 +1,4 @@
+import 'dotenv/config'; // HARUS DI BARIS 1
 import { Client, GatewayIntentBits, Partials } from "discord.js";
 import { logger } from "../lib/logger";
 import { handleMessage } from "./handler";

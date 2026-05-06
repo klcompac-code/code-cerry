@@ -31,7 +31,7 @@ const FILE_NAME = "obf.ts";
 
 // Path ke prometheus-main.lua — bisa di-override via env var
 const PROMETHEUS_PATH = process.env["PROMETHEUS_PATH"]
-  ?? path.join(__dirname, "..", "prometheus", "prometheus-main.lua");
+  ?? path.join(__dirname, "..", "Prometheus", "prometheus-main.lua");
 
 // Interpreter Lua yang akan dicoba
 const LUA_INTERPRETERS = ["lua5.1", "lua", "lua5.3", "lua5.4", "luajit"];
