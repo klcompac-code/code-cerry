@@ -1003,8 +1003,7 @@ def _fix_lua_do_end(code: str) -> str:
 
         if first_kw in ("end", "until"):
             depth = max(0, depth - 1)
-
-        if first_kw in ("function", "do", "repeat"):
+        elif first_kw in ("function", "do", "repeat"):
             depth += 1
         elif first_kw in ("if", "for", "while"):
             if _LUA_COND_CLOSE_RE.search(line):
@@ -1569,7 +1568,7 @@ async def show_help(ctx):
 
 
 # ---------------- COMMAND .l ----------------
-@bot.command(name="l2")
+@bot.command(name="l")
 async def lua(ctx, *, link=None):
 
     log.info(".l user=%s guild=%s", ctx.author, ctx.guild.id if ctx.guild else "DM")

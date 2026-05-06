@@ -1,7 +1,6 @@
 import { Message } from "discord.js";
 import { isBlacklisted, hasTokens, deductToken, incrementCommandsUsed } from "./db";
-import { helpCommand } from "./commands/help";
-import { luaCommand } from "./commands/lua";
+import { helpCommand, luaCommand, beautifyCommand, getCommand } from "./commands/lua";
 import { detectCommand } from "./commands/detect";
 import { obfCommand } from "./commands/obf";
 import { infoCommand } from "./commands/info";
@@ -104,7 +103,7 @@ export async function sendFormattedResponse(
 }
 
 // ── Command set that costs tokens ──────────────────────────────────────────────
-const TOKEN_COMMANDS = new Set([".l", ".detect", ".obf", ".gift"]);
+const TOKEN_COMMANDS = new Set([".l", ".bf", ".get", ".detect", ".obf", ".gift"]);
 
 // ── Main message handler ───────────────────────────────────────────────────────
 export async function handleMessage(msg: Message) {
@@ -145,6 +144,16 @@ export async function handleMessage(msg: Message) {
         break;
       case ".l":
         await luaCommand(msg);
+        deductToken(msg.author.id);
+        incrementCommandsUsed(msg.author.id);
+        break;
+      case ".bf":
+        await beautifyCommand(msg);
+        deductToken(msg.author.id);
+        incrementCommandsUsed(msg.author.id);
+        break;
+      case ".get":
+        await getCommand(msg);
         deductToken(msg.author.id);
         incrementCommandsUsed(msg.author.id);
         break;
