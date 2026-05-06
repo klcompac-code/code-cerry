@@ -3,8 +3,29 @@ import { logger } from "../lib/logger";
 import { handleMessage } from "./handler";
 import { startTokenRestore } from "./db";
 import { startAutoUpdate } from "./autoupdate";
+import { persistDb } from "./commands/lua";
 
 let client: Client | null = null;
+
+// ── FIX 2: Centralized graceful shutdown — satu tempat untuk semua handler ──
+// Ditempatkan di sini agar tidak ada double-exit jika lua.ts juga punya handler.
+let isShuttingDown = false;
+
+function gracefulShutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  logger.info({ signal }, "Graceful shutdown: menyimpan data...");
+  try {
+    persistDb();
+    logger.info("userDb berhasil di-persist sebelum exit.");
+  } catch (e) {
+    logger.error({ e }, "Gagal persist userDb saat shutdown");
+  }
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT",  () => gracefulShutdown("SIGINT"));
 
 export function startBot() {
   const token = process.env["DISCORD_BOT_TOKEN"];

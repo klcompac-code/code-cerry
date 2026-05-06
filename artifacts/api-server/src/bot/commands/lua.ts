@@ -35,6 +35,7 @@ import {
   ButtonInteraction,
 } from "discord.js";
 import { spawn } from "child_process";
+import { randomBytes, createCipheriv, createDecipheriv, scryptSync } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -84,7 +85,83 @@ interface UserRecord {
   tokens: number;
 }
 
-const userDb = new Map<string, UserRecord>();
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX 1: ENKRIPSI AES-256-GCM untuk users.json
+// Key diambil dari env DB_ENCRYPTION_KEY (wajib di-set di .env)
+// Format file: <16-byte IV hex>:<16-byte authTag hex>:<ciphertext hex>
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DB_PATH = path.join(process.cwd(), "data", "users.enc");
+const DB_ALGO = "aes-256-gcm";
+
+function getDbKey(): Buffer {
+  const rawKey = process.env["DB_ENCRYPTION_KEY"];
+  if (!rawKey) {
+    logger.warn({ source: FILE_NAME }, "DB_ENCRYPTION_KEY tidak di-set — data tersimpan tapi TIDAK terenkripsi. Set env var ini segera!");
+    // Fallback: gunakan key deterministik dari hostname agar tidak crash,
+    // tapi tetap beri peringatan keras.
+    return scryptSync("fallback-insecure-key-" + os.hostname(), "saltbot", 32);
+  }
+  // Derive 32-byte key dari passphrase menggunakan scrypt
+  return scryptSync(rawKey, "senv-bot-salt-v1", 32);
+}
+
+function encryptDb(plaintext: string): string {
+  const key = getDbKey();
+  const iv  = randomBytes(16);
+  const cipher = createCipheriv(DB_ALGO, key, iv);
+  const enc = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString("hex")}:${tag.toString("hex")}:${enc.toString("hex")}`;
+}
+
+function decryptDb(payload: string): string {
+  const parts = payload.split(":");
+  if (parts.length !== 3) throw new Error("Invalid encrypted DB format");
+  const [ivHex, tagHex, encHex] = parts;
+  const key     = getDbKey();
+  const iv      = Buffer.from(ivHex, "hex");
+  const tag     = Buffer.from(tagHex, "hex");
+  const encData = Buffer.from(encHex, "hex");
+  const decipher = createDecipheriv(DB_ALGO, key, iv);
+  decipher.setAuthTag(tag);
+  return decipher.update(encData).toString("utf8") + decipher.final("utf8");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX 2 (partial): SIGTERM/SIGINT dipindahkan ke index.ts — export persistDb
+// ─────────────────────────────────────────────────────────────────────────────
+
+function loadDb(): Map<string, UserRecord> {
+  try {
+    if (fs.existsSync(DB_PATH)) {
+      const payload  = fs.readFileSync(DB_PATH, "utf8").trim();
+      const plaintext = decryptDb(payload);
+      const raw = JSON.parse(plaintext);
+      return new Map(Object.entries(raw) as [string, UserRecord][]);
+    }
+  } catch (e) {
+    logger.warn({ e, source: FILE_NAME }, "Gagal load userDb dari disk, mulai fresh (mungkin key salah atau file corrupt)");
+  }
+  return new Map();
+}
+
+export function persistDb() {
+  try {
+    const dir = path.dirname(DB_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const plaintext  = JSON.stringify(Object.fromEntries(userDb));
+    const encrypted  = encryptDb(plaintext);
+    fs.writeFileSync(DB_PATH, encrypted, "utf8");
+  } catch (e) {
+    logger.error({ e, source: FILE_NAME }, "Gagal persist userDb");
+  }
+}
+
+const userDb = loadDb();
+
+// Auto-persist setiap 5 menit (SIGTERM/SIGINT ditangani di index.ts — FIX 2)
+setInterval(persistDb, 5 * 60_000);
 
 // Owner IDs come from environment variable (comma-separated)
 function getOwnerIds(): string[] {
@@ -218,6 +295,54 @@ export function getLogChannelId(): string | null {
  * Send a log embed to the configured log channel.
  * Falls back to the pino logger when no channel is configured or the send fails.
  */
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX #4: SANITIZE ERROR — Hapus path server sebelum dikirim ke log channel
+// ─────────────────────────────────────────────────────────────────────────────
+
+function sanitizeErrorForLog(err: string): string {
+  return err
+    .replace(/\/[a-zA-Z0-9_\-./]+\.(lua|ts|js|py)/g, "<path>")
+    .replace(/\/home\/[^/\s]+/g, "<home>")
+    .replace(/\/tmp\/[^/\s]+/g, "<tmp>")
+    .replace(/\/root\/[^/\s]+/g, "<root>")
+    .replace(/\/var\/[^/\s]+/g, "<var>");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX #8: SEMAPHORE — Batasi concurrent Lua execution (max 3 bersamaan)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class Semaphore {
+  private count: number;
+  private queue: Array<() => void> = [];
+
+  constructor(maxConcurrent: number) {
+    this.count = maxConcurrent;
+  }
+
+  get atCapacity(): boolean {
+    return this.count <= 0;
+  }
+
+  async acquire(): Promise<() => void> {
+    if (this.count > 0) {
+      this.count--;
+      return () => this.release();
+    }
+    return new Promise((resolve) => {
+      this.queue.push(() => { this.count--; resolve(() => this.release()); });
+    });
+  }
+
+  private release() {
+    this.count++;
+    const next = this.queue.shift();
+    if (next) next();
+  }
+}
+
+const dumpSemaphore = new Semaphore(3); // Maksimal 3 dump bersamaan
+
 async function sendLogEmbed(
   client: Message["client"] | null,
   level: "info" | "warn" | "error",
@@ -242,7 +367,7 @@ async function sendLogEmbed(
     const embed = new EmbedBuilder()
       .setColor(color)
       .setTitle(`[${FILE_NAME}] ${title}`)
-      .setDescription(description)
+      .setDescription(sanitizeErrorForLog(description))  // FIX #4: sanitize path
       .setTimestamp();
 
     if (extra) {
@@ -261,10 +386,40 @@ async function sendLogEmbed(
 // RATE LIMITING
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RATE LIMITING
+// ─────────────────────────────────────────────────────────────────────────────
+
 const userLastUse = new Map<string, number>();
 
-function checkRateLimit(userId: string): number {
-  if (isOwner(userId)) return 0; // owners are never rate-limited
+// FIX #6: Rate limit berbeda per command tier
+const RATE_LIMITS: Record<string, number> = {
+  ".l":       10,  // 10s — paling berat (eksekusi Lua)
+  ".bf":       3,  // 3s  — ringan (beautify)
+  ".darklua":  5,  // 5s  — medium
+  ".get":      2,  // 2s  — hanya download
+  ".stats":   15,  // FIX 4: 15s — cegah spam embed stats
+};
+
+const commandCooldowns = new Map<string, Map<string, number>>();
+
+function checkRateLimit(userId: string, cmd?: string): number {
+  if (isOwner(userId)) return 0;
+
+  // Per-command rate limit jika cmd diberikan
+  if (cmd && RATE_LIMITS[cmd] !== undefined) {
+    const limit = RATE_LIMITS[cmd];
+    if (!commandCooldowns.has(cmd)) commandCooldowns.set(cmd, new Map());
+    const bucket = commandCooldowns.get(cmd)!;
+    const now = Date.now();
+    const last = bucket.get(userId) ?? 0;
+    const elapsed = (now - last) / 1000;
+    if (elapsed < limit) return limit - elapsed;
+    bucket.set(userId, now);
+    return 0;
+  }
+
+  // Fallback: global rate limit
   const now = Date.now();
   const last = userLastUse.get(userId) ?? 0;
   const elapsed = (now - last) / 1000;
@@ -277,13 +432,22 @@ function checkRateLimit(userId: string): number {
 // RETRY HELPER
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+// FIX #11: Retry lebih lengkap — handle 429, 500, 502, 503, 504
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
+async function withRetry<T>(fn: () => Promise<T>, label = ""): Promise<T> {
   for (let attempt = 0; attempt < DISCORD_RETRY_ATTEMPTS; attempt++) {
     try {
       return await fn();
     } catch (err: any) {
-      if (attempt < DISCORD_RETRY_ATTEMPTS - 1 && err?.status === 503) {
-        await sleep(DISCORD_RETRY_DELAY_MS * (attempt + 1));
+      const status = err?.status ?? err?.httpStatus;
+      const isRetryable = RETRYABLE_STATUS.has(status);
+      const isLast = attempt >= DISCORD_RETRY_ATTEMPTS - 1;
+
+      if (isRetryable && !isLast) {
+        const retryAfter = err?.retryAfter ?? (DISCORD_RETRY_DELAY_MS * (attempt + 1));
+        logger.warn({ attempt, status, label, source: FILE_NAME }, "Discord retry");
+        await sleep(retryAfter);
       } else {
         throw err;
       }
@@ -329,6 +493,29 @@ function isSafeUrl(url: string): { safe: boolean; reason: string } {
   ];
   if (PRIVATE_RE.some((p) => p.test(hostname))) {
     return { safe: false, reason: `IP '${hostname}' is not public` };
+  }
+
+  // FIX #3: Blokir IPv6 loopback dan private ranges
+  const IPV6_BLOCKED = [
+    /^\[?::1\]?$/,            // loopback
+    /^\[?fc[0-9a-f]{2}:/i,   // unique local
+    /^\[?fd[0-9a-f]{2}:/i,   // unique local
+    /^\[?fe80:/i,             // link-local
+    /^\[?::ffff:/i,           // IPv4-mapped
+    /^\[?::\]?$/,             // unspecified
+  ];
+  if (IPV6_BLOCKED.some((p) => p.test(hostname))) {
+    return { safe: false, reason: `IPv6 address '${hostname}' is not allowed` };
+  }
+
+  // FIX #3b: Blokir URL dengan embedded credentials (user:pass@host)
+  if (parsed.username || parsed.password) {
+    return { safe: false, reason: "URL credentials not allowed" };
+  }
+
+  // FIX #3c: Batasi panjang URL
+  if (url.length > 2048) {
+    return { safe: false, reason: "URL too long (max 2048 chars)" };
   }
 
   return { safe: true, reason: "" };
@@ -427,10 +614,16 @@ interface ContentResult {
 }
 
 function extractCodeblock(text: string): { code: string; lang: string } | null {
-  let m = text.match(/```(\w*)\n([\s\S]*?)\n```/);
-  if (m) return { code: m[2], lang: m[1] || "lua" };
-  m = text.match(/```([\s\S]*?)```/);
-  if (m) return { code: m[1].trim(), lang: "lua" };
+  // FIX #10: Prioritaskan codeblock dengan label lua/luau/kosong saja
+  const m1 = text.match(/```(lua|luau|)\n([\s\S]*?)\n```/i);
+  if (m1) return { code: m1[2].trim(), lang: m1[1] || "lua" };
+
+  // Fallback: codeblock tanpa label — hanya jika isinya terlihat seperti kode Lua
+  const m2 = text.match(/```\n?([\s\S]*?)\n?```/);
+  if (m2) {
+    const code = m2[1].trim();
+    if (looksLikeCode(code)) return { code, lang: "lua" };
+  }
   return null;
 }
 
@@ -449,6 +642,16 @@ async function getContent(msg: Message, argLink?: string | null): Promise<Conten
   // 1. Attachment on current message
   if (msg.attachments.size > 0) {
     const att = msg.attachments.first()!;
+    // FIX #9: Validasi ekstensi file attachment
+    const ALLOWED_EXTENSIONS = new Set([".lua", ".luau", ".txt", ""]);
+    const ext = path.extname(att.name ?? "").toLowerCase();
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      return { content: null, filename: att.name ?? "file", error: `❌ Tipe file \`${ext}\` tidak didukung. Gunakan .lua, .luau, atau .txt` };
+    }
+    // Validasi MIME type jika tersedia
+    if (att.contentType && !att.contentType.startsWith("text/") && !att.contentType.includes("octet-stream")) {
+      return { content: null, filename: att.name ?? "file", error: "❌ Binary files tidak didukung" };
+    }
     if ((att.size ?? 0) > MAX_FILE_SIZE)
       return { content: null, filename: att.name ?? "file", error: "File too large (max 5 MB)" };
     const buf = await fetchUrl(att.url);
@@ -538,11 +741,27 @@ function runProcess(cmd: string, args: string[], stdin: string, timeoutMs: numbe
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
 
+    // FIX #2: Batasi output maksimal 10 MB untuk cegah memory bomb
+    const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+    let totalBytes = 0;
+    let outputKilled = false;
+
     if (stdin) proc.stdin.end(stdin, "utf8");
     else proc.stdin.end();
 
-    proc.stdout.on("data", (d) => chunks.push(d));
-    proc.stderr.on("data", (d) => errChunks.push(d));
+    proc.stdout.on("data", (d: Buffer) => {
+      totalBytes += d.length;
+      if (totalBytes > MAX_OUTPUT_BYTES) {
+        if (!outputKilled) {
+          outputKilled = true;
+          proc.kill("SIGKILL");
+          resolve({ code: -1, stdout: "", stderr: "output too large (>10MB) – process killed" });
+        }
+        return;
+      }
+      chunks.push(d);
+    });
+    proc.stderr.on("data", (d: Buffer) => errChunks.push(d));
 
     const tid = setTimeout(() => {
       proc.kill();
@@ -579,10 +798,21 @@ interface DumperResult {
 }
 
 async function runDumper(luaContent: Buffer): Promise<DumperResult> {
+  // FIX #8: Batasi concurrent Lua execution dengan semaphore
+  const release = await dumpSemaphore.acquire();
+  try {
   const interp = await findLua();
-  const uid = Math.random().toString(36).slice(2);
+  // FIX #1: Gunakan crypto-safe random (bukan Math.random yang lemah)
+  const uid = randomBytes(16).toString("hex");
   const inputFile  = path.join(os.tmpdir(), `senv_in_${uid}.lua`);
   const outputFile = path.join(os.tmpdir(), `senv_out_${uid}.lua`);
+
+  // FIX #1b: Validasi DUMPER_PATH tidak bisa escape direktori
+  const SAFE_DUMPER_PATH = fs.realpathSync(DUMPER_PATH);
+  const allowedRoot = path.resolve(__dirname, "..", "..");
+  if (!SAFE_DUMPER_PATH.startsWith(allowedRoot)) {
+    return { dumped: null, execMs: 0, loops: 0, lines: 0, error: "DUMPER_PATH resolves outside allowed directory" };
+  }
 
   try {
     fs.writeFileSync(inputFile, luaContent);
@@ -626,14 +856,34 @@ async function runDumper(luaContent: Buffer): Promise<DumperResult> {
       try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch {}
     }
   }
+  } finally {
+    // FIX #8: Selalu lepaskan semaphore setelah selesai
+    release();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SENSITIVE OUTPUT REDACTION  (senvielle.py _redact_sensitive_output)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// FIX 3: Tambah path absolut dumper & python script agar tidak bocor
+// Ini mencakup nama file, path absolut, dan variasi path yang mungkin muncul di output
+let _resolvedDumperPath = "";
+let _resolvedPyPath = "";
+try {
+  _resolvedDumperPath = fs.realpathSync(DUMPER_PATH);
+} catch { _resolvedDumperPath = DUMPER_PATH; }
+try {
+  _resolvedPyPath = fs.realpathSync(path.join(__dirname, "..", "senvielle.py"));
+} catch { _resolvedPyPath = path.join(__dirname, "..", "senvielle.py"); }
+
 const SENSITIVE_STRINGS = [
-  path.basename(DUMPER_PATH),
+  path.basename(DUMPER_PATH),            // "sennv.lua"
+  "senvielle.py",                        // python script name
+  "senvielle",                           // tanpa ekstensi
+  _resolvedDumperPath,                   // path absolut sennv.lua
+  _resolvedPyPath,                       // path absolut senvielle.py
+  path.dirname(_resolvedDumperPath),     // direktori induk
   "path getter",
   "attempting to get path",
   "paths if found",
@@ -1126,7 +1376,8 @@ async function fullDumpPipeline(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function luaCommand(msg: Message, argLink?: string) {
-  const remaining = checkRateLimit(msg.author.id);
+  // FIX #6: Gunakan per-command rate limit untuk .l (10 detik)
+  const remaining = checkRateLimit(msg.author.id, ".l");
   if (remaining > 0) {
     await sendLogEmbed(msg.client, "warn", "Rate limited (.l)",
       `User ${msg.author.tag} (${msg.author.id}) hit rate limit (${remaining.toFixed(1)}s remaining)`,
@@ -1134,38 +1385,59 @@ export async function luaCommand(msg: Message, argLink?: string) {
     return msg.reply(`⏳ Slow down, wait **${remaining.toFixed(1)}s**`);
   }
 
-  const statusMsg = await withRetry(() => msg.channel.send("⏳ dumping..."));
-
-  const { content, filename, error: fetchErr } = await getContent(msg, argLink);
-  if (fetchErr || !content) {
-    await statusMsg.edit(fetchErr ?? "Failed to get content");
-    return;
+  // FIX #8: Beri tahu user jika semaphore penuh
+  if (dumpSemaphore.atCapacity) {
+    await msg.reply("⏳ Server sedang sibuk memproses 3 dump bersamaan, mohon tunggu...");
   }
 
-  const { text, execMs, error } = await fullDumpPipeline(content, statusMsg);
+  // FIX #17: Gunakan try/finally agar statusMsg selalu di-delete
+  let statusMsg: Message | null = null;
+  try {
+    statusMsg = await withRetry(() => msg.channel.send("⏳ dumping..."), ".l statusMsg");
 
-  if (error || !text) {
-    await sendLogEmbed(msg.client, "error", "Dump failed (.l)",
-      error ?? "Unknown error",
-      { user: msg.author.tag, file: filename, source: FILE_NAME });
-    await statusMsg.edit(`❌ ${error}`);
-    return;
+    const { content, filename, error: fetchErr } = await getContent(msg, argLink);
+    if (fetchErr || !content) {
+      await statusMsg.edit(fetchErr ?? "Failed to get content");
+      return;
+    }
+
+    const { text, execMs, error } = await fullDumpPipeline(content, statusMsg);
+
+    if (error || !text) {
+      await sendLogEmbed(msg.client, "error", "Dump failed (.l)",
+        error ?? "Unknown error",
+        { user: msg.author.tag, file: filename, source: FILE_NAME });
+      await statusMsg.edit(`❌ ${error}`);
+      return;
+    }
+
+    const { raw } = await uploadToPastefy(text, filename);
+
+    await sendLogEmbed(msg.client, "info", "Dump succeeded (.l)",
+      `User ${msg.author.tag} dumped \`${filename}\` in ${execMs.toFixed(0)}ms`,
+      { user: msg.author.tag, file: filename, paste: raw ?? "none", source: FILE_NAME });
+
+    // FIX #20: Output extension yang benar + random 5-char suffix anti-expose
+    const baseName = path.basename(filename, path.extname(filename));
+    const randSuffix = randomBytes(3).toString("hex").slice(0, 5); // 5 karakter hex acak
+    const outName = `${baseName}_${randSuffix}_dumped.lua`;
+
+    const msgContent = `✅ done in **${execMs.toFixed(2)}ms**${raw ? ` | ${raw}` : ""}`;
+    await withRetry(() =>
+      msg.reply({
+        content: msgContent,
+        files: [new AttachmentBuilder(Buffer.from(text, "utf8"), { name: outName })],
+      }), ".l reply"
+    );
+  } catch (err) {
+    logger.error({ err, source: FILE_NAME }, "Unhandled error in luaCommand");
+    await msg.reply("❌ Internal error. Coba lagi.").catch(() => {});
+  } finally {
+    // FIX #17: Selalu hapus status message
+    if (statusMsg) {
+      await statusMsg.delete().catch(() => {});
+    }
   }
-
-  const { raw } = await uploadToPastefy(text, filename);
-  await statusMsg.delete().catch(() => {});
-
-  await sendLogEmbed(msg.client, "info", "Dump succeeded (.l)",
-    `User ${msg.author.tag} dumped \`${filename}\` in ${execMs.toFixed(0)}ms`,
-    { user: msg.author.tag, file: filename, paste: raw ?? "none", source: FILE_NAME });
-
-  const msgContent = `✅ done in **${execMs.toFixed(2)}ms**${raw ? ` | ${raw}` : ""}`;
-  await withRetry(() =>
-    msg.reply({
-      content: msgContent,
-      files: [new AttachmentBuilder(Buffer.from(text, "utf8"), { name: `${filename}.txt` })],
-    })
-  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1625,8 +1897,49 @@ export async function setTokenCommand(msg: Message) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DB EXPORT  (for use by handler.ts / other modules)
+// FIX #19: COMMAND: .stats  (admin statistics + uptime)
 // ─────────────────────────────────────────────────────────────────────────────
+
+export async function statsCommand(msg: Message) {
+  if (!isOwnerOrCoOwner(msg.author.id)) {
+    return msg.reply("❌ Permission denied.");
+  }
+
+  // FIX 4: Rate limit .stats 15 detik agar tidak bisa di-spam
+  const remaining = checkRateLimit(msg.author.id, ".stats");
+  if (remaining > 0) {
+    return msg.reply(`⏳ Tunggu **${remaining.toFixed(1)}s** sebelum cek stats lagi.`);
+  }
+
+  const totalUsers    = userDb.size;
+  const premiumCount  = [...userDb.values()].filter((u) => u.tier === "premium").length;
+  const coownerCount  = [...userDb.values()].filter((u) => u.tier === "coowner").length;
+  const blacklisted   = [...userDb.values()].filter((u) => u.blacklisted).length;
+  const uptime        = process.uptime();
+  const uptimeStr     = `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${Math.floor(uptime % 60)}s`;
+  const memMB         = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+  const queueDepth    = dumpSemaphore.atCapacity ? "🔴 penuh (3/3)" : "🟢 tersedia";
+
+  const embed = new EmbedBuilder()
+    .setTitle("📊 Bot Statistics")
+    .setColor(COLOR_INFO)
+    .addFields(
+      { name: "⏱ Uptime",        value: uptimeStr,             inline: true },
+      { name: "👥 Total Users",   value: String(totalUsers),    inline: true },
+      { name: "⭐ Premium",       value: String(premiumCount),  inline: true },
+      { name: "🔑 Co-Owners",     value: String(coownerCount),  inline: true },
+      { name: "🚫 Blacklisted",   value: String(blacklisted),   inline: true },
+      { name: "🖥 Memory",        value: `${memMB} MB`,         inline: true },
+      { name: "🔧 Lua Interp",    value: _luaInterp ?? "unknown", inline: true },
+      { name: "⚙ Dump Queue",    value: queueDepth,            inline: true },
+    )
+    .setFooter({ text: FILE_NAME })
+    .setTimestamp();
+
+  await msg.reply({ embeds: [embed] });
+}
+
+
 
 export { userDb as users, coOwnerIds };
 
