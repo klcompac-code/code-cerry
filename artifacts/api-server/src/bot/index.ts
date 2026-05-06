@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits, Partials } from "discord.js";
 import { logger } from "../lib/logger";
 import { handleMessage } from "./handler";
 import { startTokenRestore } from "./db";
+import { startAutoUpdate } from "./autoupdate";
 
 let client: Client | null = null;
 
@@ -33,6 +34,7 @@ export function startBot() {
   client.once("clientReady", (c) => {
     logger.info({ tag: c.user.tag }, "Discord bot is online");
     startTokenRestore();
+    startAutoUpdate(c);
   });
 
   client.on("messageCreate", handleMessage);
@@ -43,10 +45,6 @@ export function startBot() {
 
   client.on("warn", (info) => {
     logger.warn({ info }, "Discord client warning");
-  });
-
-  client.on("disconnect", () => {
-    logger.warn("Discord client disconnected — attempting reconnect");
   });
 
   client.on("shardReconnecting", () => {
