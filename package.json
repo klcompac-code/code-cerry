@@ -1,0 +1,23 @@
+{
+  "name": "discord-bot",
+  "version": "1.0.0",
+  "description": "Discord bot server",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.17",
+    "discord.js": "^14.26.4",
+    "fastify": "^4.29.1",
+    "pino": "^9.14.0",
+    "pino-pretty": "^11.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.17",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
