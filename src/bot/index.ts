@@ -7,8 +7,6 @@ import { persistDb } from "./commands/lua";
 
 let client: Client | null = null;
 
-// ── FIX 2: Centralized graceful shutdown — satu tempat untuk semua handler ──
-// Ditempatkan di sini agar tidak ada double-exit jika lua.ts juga punya handler.
 let isShuttingDown = false;
 
 function gracefulShutdown(signal: string) {
