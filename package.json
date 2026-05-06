@@ -5,8 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "start": "ts-node --transpile-only src/index.ts",
+    "dev": "ts-node --transpile-only src/index.ts"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",
