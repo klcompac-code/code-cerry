@@ -140,27 +140,30 @@ export async function handleMessage(msg: Message) {
   }
 
   try {
+    const args = msg.content.trim().split(/\s+/);
+    const argLink = args.length > 1 ? args.slice(1).join(" ") : undefined;
+
     switch (cmd) {
       case ".help":
         await helpCommand(msg);
         break;
       case ".l":
-        await luaCommand(msg);
+        await luaCommand(msg, argLink);
         deductToken(msg.author.id);
         incrementCommandsUsed(msg.author.id);
         break;
       case ".bf":
-        await beautifyCommand(msg);
+        await beautifyCommand(msg, argLink);
         deductToken(msg.author.id);
         incrementCommandsUsed(msg.author.id);
         break;
       case ".get":
-        await getCommand(msg);
+        await getCommand(msg, argLink);
         deductToken(msg.author.id);
         incrementCommandsUsed(msg.author.id);
         break;
       case ".detect":
-        await detectCommand(msg);
+        await detectCommand(msg, argLink);
         deductToken(msg.author.id);
         incrementCommandsUsed(msg.author.id);
         break;
