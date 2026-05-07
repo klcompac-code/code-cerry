@@ -1,0 +1,2 @@
+-- this file is generated using larry
+-- Terminated: [string "Obfuscated_Script"]:1: bad argument #1 to 'char' (invalid value)

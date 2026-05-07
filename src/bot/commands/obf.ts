@@ -94,12 +94,13 @@ interface ProcessResult {
 function runProcess(
   cmd: string,
   args: string[],
-  timeoutMs: number
+  timeoutMs: number,
+  cwd?: string
 ): Promise<ProcessResult> {
   return new Promise((resolve) => {
     let proc: ReturnType<typeof spawn>;
     try {
-      proc = spawn(cmd, args, { shell: false });
+      proc = spawn(cmd, args, { shell: false, cwd });
     } catch {
       return resolve({ code: -1, stdout: "", stderr: "spawn error" });
     }
@@ -190,7 +191,7 @@ async function runPrometheus(
     ];
 
     logger.info({ preset, inputFile, source: FILE_NAME }, "Running Prometheus");
-    const result = await runProcess(interp, args, OBF_TIMEOUT_MS);
+    const result = await runProcess(interp, args, OBF_TIMEOUT_MS, path.dirname(safePath));
 
     if (result.stderr.includes("timeout")) {
       return { output: null, error: "⏱ Obfuskasi timeout (>60s). Coba kode yang lebih kecil." };
@@ -202,9 +203,20 @@ async function runPrometheus(
       return { output: obfuscated, error: null };
     }
 
-    // Ambil baris error terakhir dari stderr/stdout
-    const errLines = (result.stderr || result.stdout).trim().split("\n");
-    const lastErr = errLines.filter(Boolean).pop() ?? "Output tidak dihasilkan";
+    // Ambil baris error yang sebenarnya, bukan "[C]: ?" dari stack trace
+    let lastErr = "Output tidak dihasilkan";
+    const stdoutLines = result.stdout.trim().split("\n");
+    const stderrLines = result.stderr.trim().split("\n");
+    
+    // Coba cari error Lexing/Parsing/Syntax di stdout
+    const promErr = stdoutLines.find(l => l.includes("Error"));
+    if (promErr) {
+      lastErr = promErr;
+    } else if (stderrLines.length > 0) {
+      // Jika tidak ketemu di stdout, ambil baris pertama dari stderr (biasanya pesan error aslinya)
+      lastErr = stderrLines[0];
+    }
+
     return { output: null, error: `❌ Prometheus error: ${sanitizeError(lastErr)}` };
 
   } catch (e: any) {
@@ -333,7 +345,7 @@ export async function obfCommand(msg: Message) {
 
     // extractCode dari msg content (tanpa prefix .obf [preset])
     const stripped = msg.content.replace(/^\.obf\s*/i, "").replace(new RegExp(`^${preset}\\s*`, "i"), "").trim();
-    const cbMatch = stripped.match(/^```(?:lua|luau)?\n?([\s\S]*?)\n?```$/);
+    const cbMatch = stripped.match(/^```(?:lua|luau|txt)?\s*([\s\S]*?)\s*```$/i);
     rawCode = cbMatch ? cbMatch[1].trim() : stripped;
   }
 

@@ -42,10 +42,10 @@ function Vmify:apply(ast)
     local key = math.random(1, 255)
     local encrypted = {}
     
-    -- Enkripsi source code
+    -- Enkripsi source code (clamp to 0-255 to avoid invalid string.char)
     for i = 1, #source do
         local byte = string.byte(source, i)
-        encrypted[i] = xor(byte, key + (i % 255))
+        encrypted[i] = xor(byte, (key + (i % 255)) % 256) % 256
     end
     
     -- Konversi ke string hex
@@ -74,12 +74,12 @@ do
         local out={}
         for i=1,#_d,2 do
             local byte=tonumber(_d:sub(i,i+1),16)
-            out[#out+1]=string.char(_xor(byte,_k+((i/2-1)%%255)))
+            out[#out+1]=string.char(_xor(byte,(_k+((i/2-1)%%255))%%256)%%256)
         end
         return table.concat(out)
     end
     
-    _VM_%d = loadstring(_decrypt()) or load(_decrypt())
+    _VM_%d = (loadstring or load)(_decrypt())
     
     if _VM_%d then
         _VM_%d()

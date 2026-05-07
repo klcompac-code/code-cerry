@@ -159,6 +159,10 @@ function generator.generate(node, indent)
         return "continue"
     end
     
+    if kind == AstKind.NopStatement then
+        return ""
+    end
+    
     if kind == AstKind.DoStatement then
         local lines = { "do" }
         for _, stmt in ipairs(node.body.statements or {}) do
@@ -183,18 +187,18 @@ function generator.generate(node, indent)
         
         -- Elseif blocks
         for _, elseifNode in ipairs(node.elseifs or {}) do
-            if type(elseifNode) == "table" and elseifNode[1] and elseifNode[2] then
-                lines[#lines + 1] = "elseif " .. generator.generate(elseifNode[1], indent) .. " then"
-                for _, stmt in ipairs(elseifNode[2].statements or {}) do
+            if type(elseifNode) == "table" and elseifNode.condition and elseifNode.body then
+                lines[#lines + 1] = "elseif " .. generator.generate(elseifNode.condition, indent) .. " then"
+                for _, stmt in ipairs(elseifNode.body.statements or {}) do
                     lines[#lines + 1] = indent .. "  " .. generator.generate(stmt, indent .. "  ")
                 end
             end
         end
         
         -- Else block
-        if node.elseBody then
+        if node.elsebody then
             lines[#lines + 1] = "else"
-            for _, stmt in ipairs(node.elseBody.statements or {}) do
+            for _, stmt in ipairs(node.elsebody.statements or {}) do
                 lines[#lines + 1] = indent .. "  " .. generator.generate(stmt, indent .. "  ")
             end
         end
@@ -459,63 +463,63 @@ function generator.generate(node, indent)
     -- ============================================================
     
     if kind == AstKind.AddExpression then
-        return "(" .. generator.generate(node.left, indent) .. " + " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " + " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.SubExpression then
-        return "(" .. generator.generate(node.left, indent) .. " - " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " - " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.MulExpression then
-        return "(" .. generator.generate(node.left, indent) .. " * " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " * " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.DivExpression then
-        return "(" .. generator.generate(node.left, indent) .. " / " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " / " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.ModExpression then
-        return "(" .. generator.generate(node.left, indent) .. " % " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " % " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.PowExpression then
-        return "(" .. generator.generate(node.left, indent) .. " ^ " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " ^ " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.StrCatExpression then
-        return "(" .. generator.generate(node.left, indent) .. " .. " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " .. " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.EqualsExpression then
-        return "(" .. generator.generate(node.left, indent) .. " == " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " == " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.NotEqualsExpression then
-        return "(" .. generator.generate(node.left, indent) .. " ~= " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " ~= " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.LessThanExpression then
-        return "(" .. generator.generate(node.left, indent) .. " < " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " < " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.GreaterThanExpression then
-        return "(" .. generator.generate(node.left, indent) .. " > " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " > " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.LessThanOrEqualsExpression then
-        return "(" .. generator.generate(node.left, indent) .. " <= " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " <= " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.GreaterThanOrEqualsExpression then
-        return "(" .. generator.generate(node.left, indent) .. " >= " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " >= " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.AndExpression then
-        return "(" .. generator.generate(node.left, indent) .. " and " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " and " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     if kind == AstKind.OrExpression then
-        return "(" .. generator.generate(node.left, indent) .. " or " .. generator.generate(node.right, indent) .. ")"
+        return "(" .. generator.generate(node.lhs, indent) .. " or " .. generator.generate(node.rhs, indent) .. ")"
     end
     
     -- ============================================================

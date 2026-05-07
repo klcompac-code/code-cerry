@@ -14,7 +14,7 @@ import { setConfigCommand } from "./commands/setconfig";
 import { setCoOwnerCommand } from "./commands/setcoowner";
 import { logger } from "../lib/logger";
 import { config, isPrivileged } from "./config";
-import { confirmUpdate, denyUpdate } from "./autoupdate";
+import { confirmUpdate, denyUpdate, checkForUpdates } from "./autoupdate";
 import { getClient } from "./index";
 
 // ── URL validation (SSRF protection) ──────────────────────────────────────────
@@ -216,6 +216,17 @@ export async function handleMessage(msg: Message) {
         }
         const result = denyUpdate();
         await msg.reply(result);
+        break;
+      }
+      case ".checkupdate": {
+        if (!isPrivileged(msg.author.id)) {
+          await msg.reply("🚫 Hanya owner/co-owner yang bisa mengecek update.");
+          return;
+        }
+        const client = getClient();
+        if (!client) { await msg.reply("❌ Bot client tidak tersedia."); return; }
+        await msg.reply("⏳ Mengecek update di GitHub...");
+        await checkForUpdates(client);
         break;
       }
       default:

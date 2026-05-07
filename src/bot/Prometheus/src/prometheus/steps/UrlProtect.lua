@@ -120,7 +120,7 @@ do
             if not _byte then
                 error("[URL_PROTECT] Invalid encrypted string: " .. enc, 2)
             end
-            local _xb = _xor(_byte, string.byte(_k[_ki]))
+            local _xb = _xor(_byte, _k[_ki]) %% 256
             _out[#_out+1] = string.char(_xb)
             _ki = (_ki %% _UP_KEY_LEN) + 1
         end

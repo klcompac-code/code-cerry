@@ -737,6 +737,10 @@ function Unparser:unparseExpression(expression, tabbing)
 	
 	k = AstKind.IndexExpression;
 	if(expression.kind == k or expression.kind == AstKind.AssignmentIndexing) then
+		if not expression.base then
+			logger:error(string.format("IndexExpression has nil base (kind=%s)", tostring(expression.kind)));
+			return "nil--[[missing base]]";
+		end
 		local base = self:unparseExpression(expression.base, tabbing);
 		if(expression.base.kind == AstKind.VarargExpression or Ast.astKindExpressionToNumber(expression.base.kind) > Ast.astKindExpressionToNumber(k)) then
 			base = "(" .. base .. ")";

@@ -39,10 +39,10 @@ local function buildEncryptedString(str)
     local key = math.random(1, 255)
     local encrypted = {}
     for i = 1, #str do
-        encrypted[i] = string.byte(str, i) - key
+        encrypted[i] = (string.byte(str, i) - key) % 256
     end
     local tbl = table.concat(encrypted, ",")
-    return string.format("(function(k)local r={%s}local d=''for i=1,#r do d=d..string.char(r[i]+k)end return d end)(%d)", tbl, key)
+    return string.format("(function(k)local r={%s}local d=''for i=1,#r do d=d..string.char((r[i]+k)%%256)end return d end)(%d)", tbl, key)
 end
 
 local function createBooleanLiteral(value)
@@ -75,8 +75,7 @@ end
 
 local function xor32(a, b)
     local r, m = 0, 1
-    local iter = math.random(16, 32)
-    for _ = 1, iter do
+    for _ = 1, 32 do
         local x, y = a % 2, b % 2
         if x ~= y then r = r + m end
         a = math.floor((a - x) / 2)
@@ -205,7 +204,7 @@ function ConstantArray:apply(ast, pipeline)
     local tableANode = buildTableNode(arrA, totalSlots)
     local tableBNode = buildTableNode(arrB, totalSlots)
     
-    local iterCount = math.random(16, 32)
+    local iterCount = 32
     
     -- Build getter code
     local getterLines = {
@@ -291,8 +290,9 @@ function ConstantArray:apply(ast, pipeline)
                 if info then
                     -- Build: _G[getterName](scrambled) using simple access
                     local getterKeyNode = Ast.StringExpression(getterName)
-                    -- Use raw _G access without IndexExpression (safer)
-                    local gVar = Ast.VariableExpression(globalScope, "_G")
+                    -- Resolve _G through the global scope to get a proper numeric variable ID
+                    local gScope, gId = globalScope:resolve("_G")
+                    local gVar = Ast.VariableExpression(gScope, gId)
                     local getterNode = Ast.IndexExpression(gVar, getterKeyNode)
                     local argNode = Ast.NumberExpression(info.scrambled)
                     local callNode = Ast.FunctionCallExpression(getterNode, { argNode })

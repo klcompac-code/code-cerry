@@ -2590,43 +2590,39 @@ ed.tobit = ee
 ed.tohex = function(d_, U)
     return string.format("%0" .. (U or 8) .. "x", (d_ or 0) % 0x100000000)
 end
-_G.bit = {band = function(bo, aa)
-        return ee(ee(bo) & ee(aa))
-    end, bor = function(bo, aa)
-        return ee(ee(bo) | ee(aa))
-    end, bxor = function(bo, aa)
-        return ee(ee(bo) ~ ee(aa))
-    end, lshift = function(d_, U)
-        return ee(ee(d_) << U % 32)
-    end, rshift = function(d_, U)
-        return ee(ee(d_) >> U % 32)
-    end}
+_G.bit = {
+    band = function(bo, aa) return ee(bit.band(ee(bo), ee(aa))) end,
+    bor = function(bo, aa) return ee(bit.bor(ee(bo), ee(aa))) end,
+    bxor = function(bo, aa) return ee(bit.bxor(ee(bo), ee(aa))) end,
+    lshift = function(d_, U) return ee(bit.lshift(ee(d_), U % 32)) end,
+    rshift = function(d_, U) return ee(bit.rshift(ee(d_), U % 32)) end
+}
 _G.bit32 = _G.bit
 ed.arshift = function(d_, U)
     local b5 = ee(d_ or 0)
     if b5 < 0 then
-        return ee(b5 >> U or 0) + ee(-1 << 32 - (U or 0))
+        return ee(bit.bor(bit.rshift(b5, U or 0), bit.lshift(-1, 32 - (U or 0))))
     else
-        return ee(b5 >> U or 0)
+        return ee(bit.rshift(b5, U or 0))
     end
 end
 ed.rol = function(d_, U)
     d_ = d_ or 0
     U = (U or 0) % 32
-    return ee(d_ << U | (d_ >> 32 - U))
+    return ee(bit.bor(bit.lshift(d_, U), bit.rshift(d_, 32 - U)))
 end
 ed.ror = function(d_, U)
     d_ = d_ or 0
     U = (U or 0) % 32
-    return ee(d_ >> U | (d_ << 32 - U))
+    return ee(bit.bor(bit.rshift(d_, U), bit.lshift(d_, 32 - U)))
 end
 ed.bswap = function(d_)
     d_ = d_ or 0
-    local bo = d_ >> 24 & 0xFF
-    local aa = d_ >> 8 & 0xFF00
-    local ah = d_ << 8 & 0xFF0000
-    local ef = d_ << 24 & 0xFF000000
-    return ee(bo | aa | ah | ef)
+    local bo = bit.band(bit.rshift(d_, 24), 0xFF)
+    local aa = bit.band(bit.rshift(d_, 8), 0xFF00)
+    local ah = bit.band(bit.lshift(d_, 8), 0xFF0000)
+    local ef = bit.band(bit.lshift(d_, 24), 0xFF000000)
+    return ee(bit.bor(bo, aa, ah, ef))
 end
 ed.countlz = function(U)
     U = ed.tobit(U)
@@ -2671,12 +2667,12 @@ ed.lrotate = ed.rol
 ed.rrotate = ed.ror
 ed.extract = function(U, eg, eh)
     eh = eh or 1
-    return U >> eg & 1 << eh - 1
+    return bit.band(bit.rshift(U, eg), bit.lshift(1, eh) - 1)
 end
 ed.replace = function(U, b5, eg, eh)
     eh = eh or 1
-    local ei = 1 << eh - 1
-    return U & ~(ei << eg) | (b5 & ei << eg)
+    local ei = bit.lshift(1, eh) - 1
+    return bit.bor(bit.band(U, bit.bnot(bit.lshift(ei, eg))), bit.lshift(bit.band(b5, ei), eg))
 end
 ed.btest = function(bo, aa)
     return ed.band(bo, aa) ~= 0

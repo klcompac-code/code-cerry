@@ -22,7 +22,7 @@ export const config: BotConfig = {
   allowDmCommands: false,
   blockOsLibrary: true,
   coOwnerIds: (process.env["BOT_COOWNER_IDS"] ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-  autoUpdateEnabled: true,
+  autoUpdateEnabled: false,
   autoUpdateIntervalMs: 30 * 60 * 1000,
 };
 
