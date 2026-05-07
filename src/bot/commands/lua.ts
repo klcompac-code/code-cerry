@@ -537,7 +537,7 @@ const BROWSER_HEADERS: HeadersInit = {
   "Cache-Control": "max-age=0",
 };
 
-async function fetchUrl(url: string, timeoutMs = 8_000): Promise<Buffer | null> {
+async function fetchUrl(url: string, timeoutMs = 8_000, asExecutor = false): Promise<Buffer | null> {
   const { safe, reason } = isSafeUrl(url);
   if (!safe) {
     logger.warn({ url, reason, source: FILE_NAME }, "[security] blocked request");
@@ -547,8 +547,15 @@ async function fetchUrl(url: string, timeoutMs = 8_000): Promise<Buffer | null> 
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), timeoutMs);
 
+  const headers: Record<string, string> = { ...BROWSER_HEADERS as Record<string, string> };
+  if (asExecutor) {
+    const executors = ["wave", "Wave", "Xeno", "xeno", "Delta", "delta"];
+    headers["identifyexecutor"] = executors[Math.floor(Math.random() * executors.length)];
+    headers["User-Agent"] = "Roblox/WinInet";
+  }
+
   try {
-    const res = await fetch(url, { headers: BROWSER_HEADERS, signal: controller.signal });
+    const res = await fetch(url, { headers, signal: controller.signal });
     clearTimeout(tid);
     if (!res.ok) return null;
     return Buffer.from(await res.arrayBuffer());
@@ -629,7 +636,7 @@ function extractCodeblock(text: string): { code: string; lang: string } | null {
   return null;
 }
 
-async function getContent(msg: Message, argLink?: string | null): Promise<ContentResult> {
+async function getContent(msg: Message, argLink?: string | null, asExecutor = false): Promise<ContentResult> {
   // FIX #21: Prioritas 1 - Check codeblock dari REPLY MESSAGE terlebih dahulu
   if (msg.reference?.messageId) {
     try {
@@ -651,7 +658,7 @@ async function getContent(msg: Message, argLink?: string | null): Promise<Conten
           return { content: null, filename: att.name ?? "file", error: "❌ Binary files tidak didukung" };
         }
         if ((att.size ?? 0) <= MAX_FILE_SIZE) {
-          const buf = await fetchUrl(att.url);
+          const buf = await fetchUrl(att.url, 8_000, asExecutor);
           if (buf) return { content: buf, filename: att.name ?? "file", error: null };
         }
       }
@@ -660,7 +667,7 @@ async function getContent(msg: Message, argLink?: string | null): Promise<Conten
       if (refUrl) {
         const { safe, reason } = isSafeUrl(refUrl);
         if (safe) {
-          const buf = await fetchUrl(refUrl);
+          const buf = await fetchUrl(refUrl, 8_000, asExecutor);
           if (buf && buf.length <= MAX_FILE_SIZE)
             return { content: buf, filename: getFilenameFromUrl(refUrl), error: null };
         }
@@ -694,7 +701,7 @@ async function getContent(msg: Message, argLink?: string | null): Promise<Conten
     }
     if ((att.size ?? 0) > MAX_FILE_SIZE)
       return { content: null, filename: att.name ?? "file", error: "File too large (max 5 MB)" };
-    const buf = await fetchUrl(att.url);
+    const buf = await fetchUrl(att.url, 8_000, asExecutor);
     if (!buf)
       return { content: null, filename: att.name ?? "file", error: "Failed to download attachment" };
     return { content: buf, filename: att.name ?? "file", error: null };
@@ -707,7 +714,7 @@ async function getContent(msg: Message, argLink?: string | null): Promise<Conten
     if (!safe) return { content: null, filename: "file", error: `Blocked URL: ${reason}` };
 
     const filename = getFilenameFromUrl(url);
-    const buf = await fetchUrl(url);
+    const buf = await fetchUrl(url, 8_000, asExecutor);
     if (buf) {
       if (buf.length > MAX_FILE_SIZE) return { content: null, filename, error: "File too large" };
       return { content: buf, filename, error: null };
@@ -1720,6 +1727,14 @@ export async function luaCommand(msg: Message, argLink?: string) {
 
     if (error || !text) {
       hasError = true;
+      try {
+        const failDir = path.join(process.cwd(), "data", "failed_deobf");
+        if (!fs.existsSync(failDir)) fs.mkdirSync(failDir, { recursive: true });
+        fs.writeFileSync(path.join(failDir, `failed_${Date.now()}.lua`), content);
+        logger.info("Saved failed deobf script for auto-learning analysis");
+      } catch (e) {
+        logger.error({ err: e }, "Failed to save failed deobf script");
+      }
       await sendLogEmbed(msg.client, "error", "Dump failed (.l)",
         error ?? "Unknown error",
         { user: msg.author.tag, file: filename, source: FILE_NAME });
@@ -1936,7 +1951,7 @@ export async function getCommand(msg: Message, argLink?: string) {
     }
   }
 
-  const { content, filename, error: fetchErr } = await getContent(msg, argLink);
+  const { content, filename, error: fetchErr } = await getContent(msg, argLink, true);
   if (fetchErr || !content) { await statusMsg.edit(fetchErr ?? "No content"); return; }
 
   let buf = content;

@@ -94,7 +94,9 @@ export async function confirmUpdate(client: Client, userId: string): Promise<str
 
   setTimeout(() => {
     try {
+      try { execSync("git stash", { cwd: process.cwd(), stdio: "ignore" }); } catch (e) { logger.warn("git stash failed", e); }
       execSync("git pull origin main", { cwd: process.cwd(), stdio: "inherit" });
+      try { execSync("git stash pop", { cwd: process.cwd(), stdio: "ignore" }); } catch (e) { logger.warn("git stash pop failed", e); }
       logger.info("git pull done — rebuilding...");
 
       const distPath = process.env["BUILD_CMD_DIR"] ?? "artifacts/api-server";

@@ -380,6 +380,14 @@ export async function obfCommand(msg: Message) {
   if (statusMsg) await statusMsg.delete().catch(() => {});
 
   if (error || !output) {
+    try {
+      const failDir = path.join(process.cwd(), "data", "failed_obf");
+      if (!fs.existsSync(failDir)) fs.mkdirSync(failDir, { recursive: true });
+      fs.writeFileSync(path.join(failDir, `failed_${Date.now()}.lua`), rawCode);
+      logger.info("Saved failed obf script for auto-learning analysis");
+    } catch (e) {
+      logger.error({ err: e }, "Failed to save failed obf script");
+    }
     await msg.reply(error ?? "❌ Obfuskasi gagal tanpa alasan yang jelas.");
     return;
   }
