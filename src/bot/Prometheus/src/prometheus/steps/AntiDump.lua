@@ -131,6 +131,24 @@ do
 end]], magic, magic, ACTION)
     end
 
+    -- 5. Detect Sennv/Prometheus Mock Dumper
+    blocks[#blocks+1] = string.format([[
+do
+    local _dumper_detected = false
+    local _ok, _err = pcall(function()
+        if type(getgenv) == "function" and getgenv() == _G then
+            _dumper_detected = true
+            print("dumper detect")
+            local _reason="DUMPER_ENV_DETECTED"
+            local _detail="Mock getgenv == _G"
+            %s
+        end
+    end)
+    if _dumper_detected then
+        error("dumper detect", 0)
+    end
+end]], ACTION)
+
     local parser = Parser:new({LuaVersion=Enums.LuaVersion.Lua51})
     for i=#blocks,1,-1 do
         local ok, parsed = pcall(function() return parser:parse(blocks[i]) end)

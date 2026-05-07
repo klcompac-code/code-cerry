@@ -1,5 +1,5 @@
 import 'dotenv/config'; // HARUS DI BARIS 1
-import { Client, GatewayIntentBits, Partials } from "discord.js";
+import { Client, GatewayIntentBits, Partials, ActivityType } from "discord.js";
 import { logger } from "../lib/logger";
 import { handleMessage } from "./handler";
 import { startTokenRestore } from "./db";
@@ -15,12 +15,18 @@ function gracefulShutdown(signal: string) {
   isShuttingDown = true;
   logger.info({ signal }, "Graceful shutdown: menyimpan data...");
   try {
+    if (client && client.user) {
+      client.user.setPresence({
+        activities: [{ name: "listening to code\nbot offline btw", type: ActivityType.Custom }],
+        status: 'dnd'
+      });
+    }
     persistDb();
     logger.info("userDb berhasil di-persist sebelum exit.");
   } catch (e) {
     logger.error({ e }, "Gagal persist userDb saat shutdown");
   }
-  process.exit(0);
+  setTimeout(() => process.exit(0), 1000);
 }
 
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
@@ -53,6 +59,10 @@ export function startBot() {
 
   client.once("clientReady", (c) => {
     logger.info({ tag: c.user.tag }, "Discord bot is online");
+    c.user.setPresence({
+      activities: [{ name: "listening to code\nbot online btw", type: ActivityType.Custom }],
+      status: 'online'
+    });
     startTokenRestore();
     startAutoUpdate(c);
   });

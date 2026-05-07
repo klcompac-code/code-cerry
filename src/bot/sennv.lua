@@ -2350,9 +2350,9 @@ local exploit_funcs = {getgenv = function()
     end, getclipboard = function()
         return '"'
     end, identifyexecutor = function()
-        return "Dumper", "3.0"
+        return "Wave", "1.0.0"
     end, getexecutorname = function()
-        return "Dumper"
+        return "Wave"
     end, gethui = function()
         local dP = bj("HiddenUI", false)
         aW(dP, "HiddenUI")
@@ -2988,6 +2988,8 @@ loadstring = function(al, eu)
         end
     end
     if type(al) == "string" then
+        at("-- [Dumper] Intercepted loadstring payload:")
+        at(al)
         al = I(al)
     end
     local R, an = e(al)

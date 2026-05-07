@@ -1048,6 +1048,8 @@ function stripComments(code: string): string {
   for (const line of code.split("\n")) {
     const stripped = line.trimStart();
     if (CATMIO_HEADER_RE.test(stripped)) { result.push(line); continue; }
+    if (stripped.startsWith("-- [Dumper]")) { result.push(line); continue; }
+    if (stripped.startsWith("-- Terminated:")) { result.push(line); continue; }
     if (stripped.startsWith("--")) continue;
     result.push(stripInlineTrailingComment(line));
   }
@@ -1443,6 +1445,27 @@ const FAKE_EXECUTOR_FUNCTIONS = `
 -- Provides stubs for KRNL, Synapse, Delta, and other executors
 -- ============================================================================
 
+-- ============================================================================
+-- ANOMALY DETECTOR (Tamper Handler)
+-- ============================================================================
+local original_warn = warn or print
+warn = function(...)
+    local msg = tostring(...)
+    if msg:lower():match("tamper") or msg:lower():match("dump") or msg:lower():match("anomaly") or msg:lower():match("fail") then
+        print("-- [Dumper] Anomaly detect: " .. msg)
+    end
+    if original_warn then original_warn(...) else print(...) end
+end
+
+local original_error = error
+error = function(msg, level)
+    local s_msg = tostring(msg)
+    if s_msg:lower():match("tamper") or s_msg:lower():match("dump") or s_msg:lower():match("anomaly") or s_msg:lower():match("fail") then
+        print("-- [Dumper] Anomaly detect: " .. s_msg)
+    end
+    return original_error(msg, level)
+end
+
 -- Environment getters/setters
 getgenv = getgenv or function() return _G end
 getrenv = getrenv or function() return _G end
@@ -1557,8 +1580,8 @@ isgameactive = isgameactive or function() return true end
 setwindowactive = setwindowactive or function() return end
 
 -- Executor identification
-identifyexecutor = identifyexecutor or function() return "Lua Interpreter (Mock)" end
-getexecutorname = getexecutorname or function() return "Standalone Lua" end
+identifyexecutor = identifyexecutor or function() return "Wave", "1.0.0" end
+getexecutorname = getexecutorname or function() return "Wave" end
 getexecutorversion = getexecutorversion or function() return "5.1/5.3/5.4" end
 
 -- Teleport/Queue
@@ -1636,12 +1659,30 @@ async function uploadToPastefy(content: string, title = "Dumped Script"): Promis
 // FULL DUMP PIPELINE  (orchestrates dumper + post-processing)
 // ─────────────────────────────────────────────────────────────────────────────
 
+function removeAntiTamper(code: string): string {
+  let out = code;
+  // Remove common infinite loops used as anti-tamper traps
+  out = out.replace(/while\s+true\s+do\s*end/g, "");
+  out = out.replace(/while\s+true\s+do\s*function\(\)\s*end\s*end/g, "");
+  out = out.replace(/repeat\s+until\s+false/g, "");
+  out = out.replace(/while\s+1\s+do\s*end/g, "");
+  
+  // Remove memory bombs (e.g. while true do table.insert(t, "bomb") end)
+  out = out.replace(/while\s+true\s+do\s*table\.insert\([^)]+\)\s*end/g, "");
+  
+  // Remove termination calls
+  out = out.replace(/\bos\.exit\([^)]*\)/g, "--[tamper removed os.exit]");
+  out = out.replace(/\bgame:Shutdown\(\)/g, "--[tamper removed game:Shutdown]");
+  return out;
+}
+
 async function fullDumpPipeline(
   content: Buffer,
   statusMsg: Message
 ): Promise<{ text: string | null; execMs: number; error: string | null }> {
   // FIX #23: Inject both Roblox environment AND fake executor functions
   let src = content.toString("utf8");
+  src = removeAntiTamper(src);             // Remove anti-tampering traps
   src = injectFakeExecutorFunctions(src);  // Inject fake executor functions first
   src = injectRobloxEnvironment(src);      // Then inject Roblox environment
   content = Buffer.from(src, "utf8");
@@ -1687,6 +1728,10 @@ async function fullDumpPipeline(
   text = collapseBlankLines(text);
   text = removeTrailingWhitespace(text);
   text = redactSensitiveOutput(text); // final pass
+
+  if (!text || text.trim() === "") {
+    return { text: null, execMs, error: "Dump resulted in empty output (no hooked functions were called or output was stripped)" };
+  }
 
   return { text, execMs, error: null };
 }
@@ -1981,53 +2026,26 @@ export async function getCommand(msg: Message, argLink?: string) {
 
 export async function helpCommand(msg: Message) {
   const isPriv = isOwnerOrCoOwner(msg.author.id);
-  const lines = [
-    "**Commands** — prefix: `.`",
-    "",
-    "`.l [link]` — deobfuscate / dump a Lua script (auto-injects Roblox environment)",
-    "`.bf [link]` — beautify / reformat a Lua script",
-    "`.obf [preset] [link]` — obfuscate a Lua script using Prometheus",
-    "`.detect [link]` — detect obfuscator type and features",
-    "`.darklua [link]` — apply Lua code transformations interactively",
-    "`.get [link]` — fetch a file from a URL and re-upload it (Roblox HTTP mock)",
-    "`.info [@user]` — show your (or another user's) token balance & tier",
-    "`.gift @user` — gift some of your tokens to another user",
-    "`.help` — show this message",
-    "",
-    "Attach a file, provide a URL, or reply to a message that contains one.",
-  ];
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865F2)
+    .setTitle("📚 Command List")
+    .setDescription("Prefix command: `.`\nKirim file, URL, atau reply pesan yang berisi kode Lua.")
+    .addFields(
+      { name: "🛠️ Utama", value: "`.l` Dump/Deobfuscate\n`.bf` Beautify Lua\n`.obf` Obfuscate Lua\n`.darklua` Edit interaktif", inline: true },
+      { name: "🔎 Utilitas", value: "`.get` Fetch URL/Mock\n`.detect` Deteksi Obfuskator\n`.info` Cek profil/token\n`.gift` Kasih token", inline: true },
+    )
+    .setFooter({ text: "Gunakan .help untuk melihat menu ini" });
 
   if (isPriv) {
-    lines.push(
-      "",
-      "**Owner / Co-Owner commands:**",
-      "`.setpremium @user` — upgrade a user to premium",
-      "`.setfree @user` — downgrade a user to free",
-      "`.addcoowner @user` — add a co-owner (owner only)",
-      "`.removecoowner @user` — remove a co-owner (owner only)",
-      "`.setlogchannel [#channel | channelId]` — set log channel (saves across bot restarts)",
-      "`.bl add @user [reason]` — blacklist a user",
-      "`.bl remove @user` — un-blacklist a user",
-      "`.setrole @user <premium|free>` — set user role",
-      "`.settoken @user <amount>` — set token balance",
-      "`.stats` — show bot statistics and uptime",
-      "`.config` / `.setconfig` — view or change bot settings",
-      "`.checkupdate` / `.confirm` / `.deny` — manage bot updates"
-    );
+    embed.addFields({
+      name: "👑 Owner / Co-Owner",
+      value: "`.setpremium`, `.setfree`, `.addcoowner`, `.removecoowner`, `.setlogchannel`, `.bl`, `.setrole`, `.settoken`, `.stats`, `.config`, `.checkupdate`",
+      inline: false
+    });
   }
 
-  try {
-    await msg.author.send(lines.join("\n"));
-    const replyMsg = await msg.reply("✅ Cek DM kamu untuk daftar command!");
-    // Auto-delete the confirmation message and the user's command to keep chat clean
-    setTimeout(() => {
-      replyMsg.delete().catch(() => {});
-      if (msg.deletable) msg.delete().catch(() => {});
-    }, 5000);
-  } catch (err) {
-    // Fallback if DM is disabled
-    await msg.reply("❌ Gagal mengirim DM (pastikan DM kamu terbuka). Berikut command listnya:\n\n" + lines.join("\n"));
-  }
+  await msg.reply({ embeds: [embed] });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
