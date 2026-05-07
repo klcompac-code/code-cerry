@@ -1986,9 +1986,12 @@ export async function helpCommand(msg: Message) {
     "",
     "`.l [link]` — deobfuscate / dump a Lua script (auto-injects Roblox environment)",
     "`.bf [link]` — beautify / reformat a Lua script",
-    "`.darklua [link]` — apply Lua code transformations interactively (includes Roblox env injection)",
-    "`.get [link]` — fetch a file from a URL and re-upload it",
+    "`.obf [preset] [link]` — obfuscate a Lua script using Prometheus",
+    "`.detect [link]` — detect obfuscator type and features",
+    "`.darklua [link]` — apply Lua code transformations interactively",
+    "`.get [link]` — fetch a file from a URL and re-upload it (Roblox HTTP mock)",
     "`.info [@user]` — show your (or another user's) token balance & tier",
+    "`.gift @user` — gift some of your tokens to another user",
     "`.help` — show this message",
     "",
     "Attach a file, provide a URL, or reply to a message that contains one.",
@@ -2008,10 +2011,23 @@ export async function helpCommand(msg: Message) {
       "`.setrole @user <premium|free>` — set user role",
       "`.settoken @user <amount>` — set token balance",
       "`.stats` — show bot statistics and uptime",
+      "`.config` / `.setconfig` — view or change bot settings",
+      "`.checkupdate` / `.confirm` / `.deny` — manage bot updates"
     );
   }
 
-  await msg.reply(lines.join("\n"));
+  try {
+    await msg.author.send(lines.join("\n"));
+    const replyMsg = await msg.reply("✅ Cek DM kamu untuk daftar command!");
+    // Auto-delete the confirmation message and the user's command to keep chat clean
+    setTimeout(() => {
+      replyMsg.delete().catch(() => {});
+      if (msg.deletable) msg.delete().catch(() => {});
+    }, 5000);
+  } catch (err) {
+    // Fallback if DM is disabled
+    await msg.reply("❌ Gagal mengirim DM (pastikan DM kamu terbuka). Berikut command listnya:\n\n" + lines.join("\n"));
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
