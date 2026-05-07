@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# ── FIX 5: Jangan pernah commit database terenkripsi ke repo ──
+# File ini berisi data user (token, blacklist, tier) dalam bentuk terenkripsi.
+# Meskipun terenkripsi, tetap JANGAN di-commit agar key tidak bisa di-brute force offline.
+data/
+*.enc
+
+# Environment variables — JANGAN PERNAH di-commit
+.env
+.env.*
+!.env.example
+
+# Python cache (senvielle.py)
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
